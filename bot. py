@@ -1,0 +1,122 @@
+import os
+import json
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    ApplicationBuilder,
+    ContextTypes,
+    MessageHandler,
+    CallbackQueryHandler,
+    filters,
+)
+
+REACTIONS = ["🔥", "🩶", "👏", "💯", "⚡", "😘", "🎉"]
+DATA_FILE = "reactions.json"
+
+def load_data():
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_data(data):
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+
+data = load_data()
+
+def make_keyboard(key):
+    counts = data.get(key, {"counts": [0] * len(REACTIONS), "users": []})
+
+    buttons = []
+    for i, emoji in enumerate(REACTIONS):
+        count = counts["counts"][i]
+        buttons.append(
+            InlineKeyboardButton(
+                f"{emoji} {count}",
+                callback_data=f"r:{i}"
+            )
+        )
+
+    return InlineKeyboardMarkup([buttons])
+
+async def channel_post(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.channel_post:
+        return
+
+    message = update.channel_post
+    key = f"{message.chat.id}:{message.message_id}"
+
+    if key not in data:
+        data[key] = {
+            "counts": [0] * len(REACTIONS),
+            "users": []
+        }
+        save_data(data)
+
+    try:
+        await message.edit_reply_markup(
+            reply_markup=make_keyboard(key)
+        )
+    except Exception as e:
+        print("Could not add buttons:", e)
+
+async def reaction_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    if not query.message:
+        return
+
+    if not query.data.startswith("r:"):
+        return
+
+    reaction_index = int(query.data.split(":")[1])
+
+    key = f"{query.message.chat.id}:{query.message.message_id}"
+
+    if key not in data:
+        data[key] = {
+            "counts": [0] * len(REACTIONS),
+            "users": []
+        }
+
+    user_id = query.from_user.id
+    user_key = f"{user_id}:{reaction_index}"
+
+    # Same user can give each reaction only once
+    if user_key in data[key]["users"]:
+        return
+
+    data[key]["users"].append(user_key)
+    data[key]["counts"][reaction_index] += 1
+
+    save_data(data)
+
+    try:
+        await query.message.edit_reply_markup(
+            reply_markup=make_keyboard(key)
+        )
+    except Exception as e:
+        print("Could not update buttons:", e)
+
+def main():
+    token = os.environ["BOT_TOKEN"]
+
+    app = ApplicationBuilder().token(token).build()
+
+    app.add_handler(
+        MessageHandler(filters.ALL, channel_post)
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(reaction_click)
+    )
+
+    print("Reaction bot is running...")
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES
+    )
+
+if name == "main":
+    main()
